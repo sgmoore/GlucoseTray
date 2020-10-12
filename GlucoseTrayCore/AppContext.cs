@@ -1,11 +1,14 @@
 ﻿using Dexcom.Fetch;
+using Dexcom.Fetch.Enums;
 using Dexcom.Fetch.Extensions;
 using Dexcom.Fetch.Models;
+using GlucoseTrayCore.Data;
 using GlucoseTrayCore.Services;
 using Microsoft.Extensions.Logging;
 using System;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -13,17 +16,21 @@ namespace GlucoseTrayCore
 {
     public class AppContext : ApplicationContext
     {
-        private readonly ILogger _logger;
+        private readonly ILogger<AppContext> _logger;
+        private readonly IGlucoseTrayDbContext _context;
+        private readonly IGlucoseFetchService _fetchService;
         private readonly NotifyIcon trayIcon;
         private bool IsCriticalLow;
 
         private GlucoseFetchResult FetchResult;
         private readonly IconService _iconService;
 
-        public AppContext(ILogger logger)
+        public AppContext(ILogger<AppContext> logger, IGlucoseTrayDbContext context, IconService iconService, IGlucoseFetchService fetchService)
         {
             _logger = logger;
-            _iconService = new IconService(_logger);
+            _context = context;
+            _iconService = iconService;
+            _fetchService = fetchService;
 
             trayIcon = new NotifyIcon()
             {
@@ -80,25 +87,35 @@ namespace GlucoseTrayCore
         private async Task CreateIcon()
         {
             IsCriticalLow = false;
-            var service = new GlucoseFetchService(new GlucoseFetchConfiguration
-            {
-                DexcomServer = Constants.DexcomServer,
-                DexcomUsername = Constants.DexcomUsername,
-                DexcomPassword = Constants.DexcomPassword,
-                FetchMethod = Constants.FetchMethod,
-                NightscoutUrl = Constants.NightscoutUrl,
-                NightscoutAccessToken = Constants.AccessToken,
-                UnitDisplayType = Constants.GlucoseUnitType
-            }, _logger);
-            FetchResult = await service.GetLatestReading().ConfigureAwait(false);
+            FetchResult = await _fetchService.GetLatestReading().ConfigureAwait(false);
+            LogResultToDb(FetchResult);
             trayIcon.Text = GetGlucoseMessage();
-            if (FetchResult.Value <= Constants.CriticalLowBg)
+            if ((Constants.GlucoseUnitType == GlucoseUnitType.MMOL && FetchResult.MmolValue <= Constants.CriticalLowBg) || (Constants.GlucoseUnitType == GlucoseUnitType.MG && FetchResult.MgValue <= Constants.CriticalLowBg))
                 IsCriticalLow = true;
             _iconService.CreateTextIcon(FetchResult, IsCriticalLow, trayIcon);
         }
 
         private void ShowBalloon(object sender, EventArgs e) => trayIcon.ShowBalloonTip(2000, "Glucose", GetGlucoseMessage(), ToolTipIcon.Info);
 
-        private string GetGlucoseMessage() => $"{FetchResult.GetFormattedStringValue()}   {FetchResult.Time.ToLongTimeString()}  {FetchResult.TrendIcon}{FetchResult.StaleMessage(Constants.StaleResultsThreshold)}";
+        private string GetGlucoseMessage() => $"{FetchResult.GetFormattedStringValue(Constants.GlucoseUnitType)}   {FetchResult.Time.ToLongTimeString()}  {FetchResult.Trend.GetTrendArrow()}{FetchResult.StaleMessage(Constants.StaleResultsThreshold)}";
+
+        private void LogResultToDb(GlucoseFetchResult result)
+        {
+            if (_context.GlucoseResults.Any(g => g.DateTimeUTC == result.Time.ToUniversalTime() && !result.ErrorResult && g.MgValue == result.MgValue))
+                return;
+
+            var model = new GlucoseResult
+            {
+                DateTimeUTC = result.Time.ToUniversalTime(),
+                Source = result.Source,
+                MgValue = result.MgValue,
+                MmolValue = result.MmolValue,
+                Trend = result.Trend,
+                WasError = result.ErrorResult
+            };
+
+            _context.GlucoseResults.Add(model);
+            _context.SaveChanges();
+        }
     }
 }

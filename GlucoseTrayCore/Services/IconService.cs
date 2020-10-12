@@ -11,14 +11,14 @@ namespace GlucoseTrayCore.Services
 {
     public class IconService
     {
-        private readonly ILogger _logger;
+        private readonly ILogger<IconService> _logger;
         private readonly float _standardOffset = -3f;
         private readonly int _defaultFontSize = 10;
         private readonly int _smallerFontSize = 9;
         private Font _fontToUse;
         private bool _useDefaultFontSize = true;
 
-        public IconService(ILogger logger) => _logger = logger;
+        public IconService(ILogger<IconService> logger) => _logger = logger;
 
         [DllImport("user32.dll", CharSet = CharSet.Auto)]
         private static extern bool DestroyIcon(IntPtr handle);
@@ -38,7 +38,7 @@ namespace GlucoseTrayCore.Services
 
         internal void CreateTextIcon(GlucoseFetchResult fetchResult, bool isCriticalLow, NotifyIcon trayIcon)
         {
-            var result = fetchResult.GetFormattedStringValue().Replace('.', '\''); // Use ' instead of . since it is narrower and allows a better display of a two digit number + decimal place.
+            var result = fetchResult.GetFormattedStringValue(Constants.GlucoseUnitType).Replace('.', '\''); // Use ' instead of . since it is narrower and allows a better display of a two digit number + decimal place.
 
             var isStale = fetchResult.IsStale(Constants.StaleResultsThreshold);
 
@@ -60,7 +60,7 @@ namespace GlucoseTrayCore.Services
             var bitmapText = new Bitmap(16, 16);
             var g = Graphics.FromImage(bitmapText);
             g.Clear(Color.Transparent);
-            g.DrawString(result, _fontToUse, SetColor(fetchResult.Value), xOffset, 0f);
+            g.DrawString(result, _fontToUse, SetColor(Constants.GlucoseUnitType == GlucoseUnitType.MG ? fetchResult.MgValue : fetchResult.MmolValue), xOffset, 0f);
             var hIcon = bitmapText.GetHicon();
             var myIcon = Icon.FromHandle(hIcon);
             trayIcon.Icon = myIcon;
@@ -74,8 +74,8 @@ namespace GlucoseTrayCore.Services
         private float CalculateXPosition(GlucoseFetchResult result)
         {
             _useDefaultFontSize = true;
-            var value = result.Value;
-            if (result.UnitDisplayType == GlucoseUnitType.MG) // Non MMOL display, use our standard offset.
+            var value = Constants.GlucoseUnitType == GlucoseUnitType.MG ? result.MgValue : result.MmolValue;
+            if (Constants.GlucoseUnitType == GlucoseUnitType.MG) // Non MMOL display, use our standard offset.
                 return _standardOffset;
             if (value > 9.9) // MMOL with 3 digits over 20. This requires also changing the font size from 10 to 9.
             {
